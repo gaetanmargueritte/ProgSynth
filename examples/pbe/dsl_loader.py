@@ -112,6 +112,15 @@ __dsl_funcs: Dict[str, Callable[[bool], Optional[SimpleNamespace]]] = {
             "pretty_print_inputs",
         ],
     ),
+    "universal": __base_loader(
+        "universal.universal",
+        [
+            "dsl",
+            "evaluator",
+            "lexicon",
+            ("reproduce_universal_dataset", "reproduce_dataset")
+        ]
+    )
 }
 # =======================================================================================
 # Nothing to change after this
