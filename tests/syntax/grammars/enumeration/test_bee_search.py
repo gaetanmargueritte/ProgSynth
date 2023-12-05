@@ -40,6 +40,7 @@ def test_unicity_beeSearch(cfg: TTCFG) -> None:
     for program in enumerate_prob_grammar(pcfg):
         assert program not in seen
         seen.add(program)
+    # print(pcfg.grammar)
     assert len(seen) == cfg.programs()
 
 
@@ -53,20 +54,38 @@ def test_order_beeSearch(cfg: TTCFG) -> None:
         last = p
 
 
-# @pytest.mark.parametrize("cfg", testdata)
-# def test_merge(cfg: TTCFG) -> None:
-#     pcfg = ProbDetGrammar.uniform(cfg)
-#     seen = set()
-#     for program in enumerate_prob_grammar(pcfg):
-#         assert program not in seen
-#         seen.add(program)
-#     en = enumerate_prob_grammar(pcfg)
-#     removed = dsl.parse_program("(+ 1 1)", auto_type("int"))
-#     en.merge_program(dsl.parse_program("2", auto_type("int")), removed)
-#     new_seen = set()
-#     for program in en:
-#         assert removed not in program
-#         new_seen.add(program)
-#     diff = seen.difference(new_seen)
-#     for x in diff:
-#         assert removed in x
+@pytest.mark.parametrize("cfg", testdata)
+def test_merge(cfg: TTCFG) -> None:
+    pcfg = ProbDetGrammar.uniform(cfg)
+    seen = set()
+    for program in enumerate_prob_grammar(pcfg):
+        assert program not in seen
+        seen.add(program)
+    en = enumerate_prob_grammar(pcfg)
+    removed = dsl.parse_program("(+ 1 1)", auto_type("int"))
+    en.merge_program(dsl.parse_program("2", auto_type("int")), removed)
+    new_seen = set()
+    for program in en:
+        assert removed not in program
+        new_seen.add(program)
+    diff = seen.difference(new_seen)
+    for x in diff:
+        assert removed in x
+
+
+@pytest.mark.parametrize("cfg", testdata)
+def test_clone(cfg: TTCFG) -> None:
+    pcfg = ProbDetGrammar.uniform(cfg)
+    seen = set()
+    count = 1467
+    gen = enumerate_prob_grammar(pcfg)
+    for program in gen:
+        assert program not in seen
+        seen.add(program)
+        count -= 1
+        if count == 0:
+            break
+
+    gen2 = gen.clone_with_memory(pcfg)
+    for program in gen2:
+        assert program not in seen
