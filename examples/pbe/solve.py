@@ -10,7 +10,8 @@ from dsl_loader import add_dsl_choice_arg, load_DSL
 
 
 from synth import Dataset, PBE
-from synth.semantic.evaluator import DSLEvaluatorWithConstant
+from synth.semantic.evaluator import DSLEvaluator
+from synth.specification import PBEWithConstants
 from synth.syntax import (
     ProbDetGrammar,
     ProbUGrammar,
@@ -48,13 +49,13 @@ for meta_solver in [RestartPBESolver]:
         )
 
 SEARCH_ALGOS = {
+    "beap_search": (bps_enumerate_prob_grammar, None),
     "heap_search": (hs_enumerate_prob_grammar, hs_enumerate_prob_u_grammar),
     "bucket_search": (
         lambda x: hs_enumerate_bucket_prob_grammar(x, 3),
         lambda x: hs_enumerate_bucket_prob_u_grammar(x, 3),
     ),
     "bee_search": (bs_enumerate_prob_grammar, None),
-    "beep_search": (bps_enumerate_prob_grammar, None),
 }
 
 parser = argparse.ArgumentParser(
@@ -142,7 +143,7 @@ supported_type_requests = Dataset.load(support).type_requests() if support else 
 # ================================
 
 
-def load_dsl_and_dataset() -> Tuple[Dataset[PBE], DSL, DSLEvaluatorWithConstant]:
+def load_dsl_and_dataset() -> Tuple[Dataset[PBE], DSL, DSLEvaluator]:
     dsl_module = load_DSL(dsl_name)
     dsl, evaluator = dsl_module.dsl, dsl_module.evaluator
     # ================================
@@ -165,7 +166,7 @@ def save(trace: Iterable) -> None:
 # Enumeration methods =====================================================
 def enumerative_search(
     dataset: Dataset[PBE],
-    evaluator: DSLEvaluatorWithConstant,
+    evaluator: DSLEvaluator,
     pcfgs: Union[List[ProbDetGrammar], List[ProbUGrammar]],
     trace: List[Tuple[bool, float]],
     solver: PBESolver,
@@ -188,9 +189,13 @@ def enumerative_search(
     if start == 0:
         trace.append(["solved", "solution"] + stats_name)
     for task, pcfg in zip(tasks[start:], pcfgs[start:]):
+        if task.metadata.get("name", None) is not None:
+            pbar.set_description_str(task.metadata["name"])
         total += 1
         task_solved = False
         solution = None
+        if isinstance(task.specification, PBEWithConstants):
+            pcfg = pcfg.instantiate_constants(task.specification.constants)
         try:
             sol_generator = solver.solve(
                 task, custom_enumerate(pcfg), timeout=task_timeout

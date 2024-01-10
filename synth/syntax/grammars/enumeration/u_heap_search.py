@@ -2,6 +2,7 @@ from collections import defaultdict
 from dataclasses import dataclass, field
 from heapq import heappush, heappop
 from typing import (
+    Callable,
     Dict,
     Generator,
     Generic,
@@ -47,11 +48,12 @@ class UHSEnumerator(ProgramEnumerator[None], ABC, Generic[U, V, W]):
     def __init__(
         self, G: ProbUGrammar[U, V, W], threshold: Optional[Ordered] = None
     ) -> None:
+        self._filter: Optional[Callable[[Program], bool]] = None
         self.G = G
         symbols = [S for S in self.G.rules]
         self.threshold = threshold
-        self.deleted: Set[int] = set()
-        self.seen: Set[int] = set()
+        self.deleted: Set[Program] = set()
+        self.seen: Set[Program] = set()
 
         # self.heaps[S] is a heap containing programs generated from the non-terminal S
         self.heaps: Dict[Tuple[Type, U], List[HeapElement]] = {S: [] for S in symbols}
@@ -84,6 +86,12 @@ class UHSEnumerator(ProgramEnumerator[None], ABC, Generic[U, V, W]):
     def name(cls) -> str:
         return "u-heap-search"
 
+    def programs_in_banks(self) -> int:
+        return sum(len(val) for val in self.succ.values())
+
+    def programs_in_queues(self) -> int:
+        return sum(len(val) for val in self.heaps.values())
+
     def generator(self) -> Generator[Program, None, None]:
         """
         A generator which outputs the next most probable program
@@ -92,13 +100,14 @@ class UHSEnumerator(ProgramEnumerator[None], ABC, Generic[U, V, W]):
             program = self.start_query()
             if program is None:
                 break
-            h = hash(program)
-            while h in self.seen:
+            while program in self.seen:
                 program = self.start_query()
                 if program is None:
                     return
-                h = hash(program)
-            self.seen.add(h)
+            if not self._should_keep_subprogram(program):
+                self.deleted.add(program)
+                continue
+            self.seen.add(program)
             yield program
 
     def probability(self, program: Program) -> float:
@@ -196,7 +205,7 @@ class UHSEnumerator(ProgramEnumerator[None], ABC, Generic[U, V, W]):
             return None
         elem = heappop(self._start_heap)
         self.query(elem.start, elem.program)
-        while hash(elem.program) in self.deleted:
+        while elem.program in self.deleted:
             elem = heappop(self._start_heap)
             self.query(elem.start, elem.program)
         return elem.program
@@ -274,7 +283,7 @@ class UHSEnumerator(ProgramEnumerator[None], ABC, Generic[U, V, W]):
         try:
             element = heappop(self.heaps[S])
             succ = element.program
-            while hash(succ) in self.deleted:
+            while succ in self.deleted:
                 self.__add_successors__(succ, S)
                 element = heappop(self.heaps[S])
                 succ = element.program
@@ -294,7 +303,7 @@ class UHSEnumerator(ProgramEnumerator[None], ABC, Generic[U, V, W]):
         In other words, other will no longer be generated through heap search
         """
         our_hash = hash(other)
-        self.deleted.add(our_hash)
+        self.deleted.add(other)
         for S in self.G.rules:
             if our_hash in self.pred[S] and our_hash in self.succ[S]:
                 pred_hash = self.pred[S][our_hash]

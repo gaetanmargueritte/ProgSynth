@@ -1,4 +1,4 @@
-from synth.syntax.grammars.enumeration.beep_search import (
+from synth.syntax.grammars.enumeration.beap_search import (
     enumerate_prob_grammar,
 )
 from synth.syntax.grammars.cfg import CFG
@@ -52,6 +52,22 @@ def test_order_beep_search(cfg: TTCFG) -> None:
         p = pcfg.probability(program)
         assert p <= last
         last = p
+
+
+def test_infinite() -> None:
+    pcfg = ProbDetGrammar.random(
+        CFG.infinite(dsl, testdata[0].type_request, n_gram=1), 1
+    )
+    count = 10000
+    last = 1.0
+    for program in enumerate_prob_grammar(pcfg):
+        count -= 1
+        p = pcfg.probability(program)
+        assert -1e-12 <= last - p, f"failed at program n°{count}:{program}"
+        last = p
+        if count < 0:
+            break
+    assert count == -1
 
 
 @pytest.mark.parametrize("cfg", testdata)

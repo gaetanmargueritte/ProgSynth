@@ -1,6 +1,8 @@
 from typing import (
+    Callable,
     Generator,
     Generic,
+    Optional,
     TypeVar,
     Union,
 )
@@ -34,6 +36,14 @@ class ProgramEnumerator(ABC, Generic[U]):
         return self.generator()
 
     @abstractmethod
+    def programs_in_banks(self) -> int:
+        pass
+
+    @abstractmethod
+    def programs_in_queues(self) -> int:
+        pass
+
+    @abstractmethod
     def probability(self, program: Program) -> float:
         """
         Return the probability of generating the given program according to the grammar associated with this enumerator.
@@ -44,8 +54,19 @@ class ProgramEnumerator(ABC, Generic[U]):
         """
         Merge other into representative.
         Function used for observational equivalence, that means other and representative are semantically equivalent for the current task.
+        This is for a posteriori merging, it is rather inefficient compared to evaluating subprograms for most enumerative algorithms.
         """
         pass
+
+    def set_subprogram_filter(self, filter: Callable[[Program], bool]) -> None:
+        """
+        Function that can be called to filter out subprograms, can be used for observational equivalence and is the most efficient way to do so.
+        When filter returns True the program will be discarded by the enumerator.
+        """
+        self._filter: Optional[Callable[[Program], bool]] = filter
+
+    def _should_keep_subprogram(self, program: Program) -> bool:
+        return self._filter is None or not self._filter(program)
 
     @abstractmethod
     def clone_with_memory(

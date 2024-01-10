@@ -1,4 +1,6 @@
 from typing import (
+    Any,
+    Callable,
     Dict,
     Generator,
     Generic,
@@ -18,7 +20,7 @@ if TYPE_CHECKING:
     from synth.syntax.grammars.cfg import CFG
 from synth.syntax.grammars.grammar import NGram
 from synth.syntax.grammars.det_grammar import DerivableProgram, DetGrammar
-from synth.syntax.program import Function, Program
+from synth.syntax.program import Constant, Function, Program
 from synth.syntax.type_system import Type
 
 T = TypeVar("T")
@@ -93,6 +95,21 @@ class TaggedDetGrammar(DetGrammar[U, V, W], Generic[T, U, V, W]):
                     safe = {P: other.tags[S][P]}
                 new_probs[S][P] = self.tags.get(S, safe)[P] + other.tags.get(S, safe)[P]  # type: ignore
         return self.__class__(self.grammar, new_probs)
+
+    def instantiate_constants(
+        self, constants: Dict[Type, List[Any]]
+    ) -> "TaggedDetGrammar[T, U, V, W]":
+        tags: Dict[Tuple[Type, U], Dict[DerivableProgram, T]] = {}
+
+        for S in self.tags:
+            tags[S] = {}
+            for P in self.tags[S]:
+                if isinstance(P, Constant) and P.type in constants:
+                    for val in constants[P.type]:
+                        tags[S][Constant(P.type, val, True)] = self.tags[S][P]
+                else:
+                    tags[S][P] = self.tags[S][P]
+        return self.__class__(self.grammar.instantiate_constants(constants), tags)
 
 
 class ProbDetGrammar(TaggedDetGrammar[float, U, V, W]):
@@ -192,6 +209,23 @@ class ProbDetGrammar(TaggedDetGrammar[float, U, V, W]):
             current = lst[-1]
         return Function(P, arguments)
 
+    def instantiate_constants(
+        self, constants: Dict[Type, List[Any]]
+    ) -> "ProbDetGrammar[U, V, W]":
+        tags: Dict[Tuple[Type, U], Dict[DerivableProgram, float]] = {}
+
+        for S in self.tags:
+            tags[S] = {}
+            for P in self.tags[S]:
+                if isinstance(P, Constant) and P.type in constants:
+                    for val in constants[P.type]:
+                        tags[S][Constant(P.type, val, True)] = self.tags[S][P] / len(
+                            constants[P.type]
+                        )
+                else:
+                    tags[S][P] = self.tags[S][P]
+        return self.__class__(self.grammar.instantiate_constants(constants), tags)
+
     @classmethod
     def uniform(cls, grammar: DetGrammar[U, V, W]) -> "ProbDetGrammar[U, V, W]":
         return ProbDetGrammar(
@@ -201,6 +235,21 @@ class ProbDetGrammar(TaggedDetGrammar[float, U, V, W]):
                 for S in grammar.rules
             },
         )
+
+    @classmethod
+    def random(
+        cls,
+        grammar: DetGrammar[U, V, W],
+        seed: Optional[int] = None,
+        gen: Callable[[np.random.Generator], float] = lambda prng: prng.uniform(),
+    ) -> "ProbDetGrammar[U, V, W]":
+        prng = np.random.default_rng(seed)
+        pg = ProbDetGrammar(
+            grammar,
+            {S: {_: gen(prng) for _ in grammar.rules[S]} for S in grammar.rules},
+        )
+        pg.normalise()
+        return pg
 
     @classmethod
     def pcfg_from_samples(

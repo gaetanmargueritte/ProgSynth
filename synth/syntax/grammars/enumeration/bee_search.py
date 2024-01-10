@@ -2,6 +2,7 @@ from collections import defaultdict
 from itertools import product
 from heapq import heappush, heappop
 from typing import (
+    Callable,
     Dict,
     Generator,
     Generic,
@@ -48,6 +49,7 @@ class BeeSearch(
         self.G = G
         self._seen: Set[Program] = set()
         self._deleted: Set[Program] = set()
+        self._filter: Optional[Callable[[Program], bool]] = None
 
         self._cost_list: List[float] = []
         # S -> cost_index -> program list
@@ -59,6 +61,7 @@ class BeeSearch(
         self._delayed: Dict[
             Tuple[Type, U], List[Tuple[List[int], DerivableProgram, Optional[int]]]
         ] = defaultdict(list)
+        self._has_merged = False
         # Fill terminals first
         for S in self.G.rules:
             self._bank[S] = {}
@@ -120,14 +123,15 @@ class BeeSearch(
 
     def _add_program_(
         self, S: Tuple[Type, U], new_program: Program, cost_index: int
-    ) -> None:
+    ) -> bool:
         if new_program in self._deleted:
-            return
+            return False
         local_bank = self._bank[S]
         if cost_index not in local_bank:
             local_bank[cost_index] = []
         # assert max(local_bank.keys()) + 1 == len(self._cost_lists[S]), f"index:{cost_index} {local_bank.keys()} vs {len(self._cost_lists[S])}"
         local_bank[cost_index].append(new_program)
+        return True
 
     def _index_cost2real_cost_(
         self, S: Tuple[Type, U], P: DerivableProgram, indices: List[int]
@@ -145,20 +149,29 @@ class BeeSearch(
 
     def generator(self) -> Generator[Program, None, None]:
         progs = self.G.programs()
-        while True:
+        infinite = progs < 0
+        failed = 0
+        while (
+            infinite
+            or (self._has_merged and failed < 1000)
+            or (not self._has_merged and progs > 0)
+        ):
             non_terminals, cost = self._next_cheapest_()
             if cost is None:
                 break
             if len(non_terminals) == 0:
                 break
+            failed += 1
+            succ = False
             for program in self._produce_programs_from_cost_(non_terminals, cost):
                 progs -= 1
+                if not succ:
+                    failed -= 1
+                succ = True
                 if program in self._seen:
                     continue
                 self._seen.add(program)
                 yield program
-            if progs <= 0:
-                break
 
     def _next_cheapest_(self) -> Tuple[List[Tuple[Type, U]], Optional[float]]:
         """
@@ -214,13 +227,19 @@ class BeeSearch(
                     # print("failed")
                     continue
                 for new_args in product(*args_possibles):
-                    new_program = Function(element.P, list(new_args))
-                    self._add_program_(S, new_program, cost_index)
-                    if S == self.G.start:
+                    if len(args_possibles) == 0:
+                        new_program: Program = element.P
+                    else:
+                        new_program = Function(element.P, list(new_args))
+                    if (
+                        self._add_program_(S, new_program, cost_index)
+                        and S == self.G.start
+                    ):
                         yield new_program
             self._max_index[S] = maxi
 
     def merge_program(self, representative: Program, other: Program) -> None:
+        self._has_merged = True
         self._deleted.add(other)
         for S in self.G.rules:
             if S[0] != other.type:
@@ -232,6 +251,14 @@ class BeeSearch(
 
     def probability(self, program: Program) -> float:
         return self.G.probability(program)
+
+    def programs_in_banks(self) -> int:
+        return sum(sum(len(x) for x in val.values()) for val in self._bank.values())
+
+    def programs_in_queues(self) -> int:
+        return sum(len(val) for val in self._delayed.values()) + sum(
+            len(val) for val in self._prog_queued.values()
+        )
 
     @classmethod
     def name(cls) -> str:
@@ -246,11 +273,14 @@ class BeeSearch(
         return enum
 
 
-def enumerate_prob_grammar(G: ProbDetGrammar[U, V, W]) -> BeeSearch[U, V, W]:
+def enumerate_prob_grammar(
+    G: ProbDetGrammar[U, V, W], threshold: int = 2
+) -> BeeSearch[U, V, W]:
+    mult = 10**threshold
     Gp: ProbDetGrammar = ProbDetGrammar(
         G.grammar,
         {
-            S: {P: -np.log(p) for P, p in val.items() if p > 0}
+            S: {P: int(-np.log(p) * mult) for P, p in val.items() if p > 0}
             for S, val in G.probabilities.items()
         },
     )

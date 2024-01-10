@@ -1,5 +1,6 @@
 from abc import ABC, abstractmethod
-from typing import Generator, List as TList, Any, Optional, Set, Tuple
+from typing import Dict, Generator, List as TList, Any, Optional, Set, Tuple
+import itertools
 
 from synth.syntax.type_system import (
     PrimitiveType,
@@ -42,7 +43,7 @@ class Program(ABC):
         return False
 
     def is_invariant(self, constant_types: Set[PrimitiveType]) -> bool:
-        """ """
+        """SHOULD BE DELETED"""
         return True
 
     def count_constants(self) -> int:
@@ -50,6 +51,17 @@ class Program(ABC):
         Returns the number of constants that are present in this program.
         """
         return int(self.is_constant())
+
+    def constants(self) -> Generator[Optional["Constant"], None, None]:
+        """
+        Iterates over all constants of this program, yields a None only if the program does NOT contain any constant.
+        """
+        yield None
+
+    def all_constants_instantiation(
+        self, constants: Dict[Type, TList[Any]]
+    ) -> Generator["Program", None, None]:
+        yield self
 
     def size(self) -> int:
         """
@@ -71,6 +83,26 @@ class Program(ABC):
         P1, P2, P3, P4, Function(P3, [P4]), Function(P1, [P2, Function(P3, [P4])])
         """
         yield self
+
+    def pretty_print(self) -> TList[str]:
+        """
+        Represents this program as a list of operations.
+        """
+        defined: Dict["Program", Tuple[int, str, str]] = {}
+        self.__pretty_print__(defined, 0)
+        data = sorted(defined.values())
+        order = [x[2] for x in data if len(x[2]) > 0]
+        return order
+
+    def __pretty_print__(
+        self, defined: Dict["Program", Tuple[int, str, str]], last: int
+    ) -> int:
+        if self not in defined:
+            var_name = f"x{last}"
+            defined[self] = (last, var_name, f"{var_name}: {self.type} = {self}")
+            return last + 1
+        else:
+            return last
 
     def __contains__(self, other: "Program") -> bool:
         return self == other
@@ -107,6 +139,15 @@ class Variable(Program):
     def __str__(self) -> str:
         return "var" + format(self.variable)
 
+    def __pretty_print__(
+        self, defined: Dict["Program", Tuple[int, str, str]], last: int
+    ) -> int:
+        if self not in defined:
+            defined[self] = (0, str(self), "")
+            return last + 1
+        else:
+            return last
+
     def __eq__(self, other: Any) -> bool:
         return isinstance(other, Variable) and self.variable == other.variable
 
@@ -139,6 +180,15 @@ class Constant(Program):
         """
         return self._has_value
 
+    def constants(self) -> Generator[Optional["Constant"], None, None]:
+        yield self
+
+    def all_constants_instantiation(
+        self, constants: Dict[Type, TList[Any]]
+    ) -> Generator["Program", None, None]:
+        for val in constants[self.type]:
+            yield Constant(self.type, val)
+
     def __str__(self) -> str:
         if self.has_value():
             return format(self.value)
@@ -153,6 +203,7 @@ class Constant(Program):
         """
         self._has_value = True
         self.value = value
+        self.hash = hash((str(self.value), self._has_value, self.type))
 
     def reset(self) -> None:
         """
@@ -160,6 +211,7 @@ class Constant(Program):
         """
         self._has_value = False
         self.value = None
+        self.hash = hash((str(self.value), self._has_value, self.type))
 
     def __eq__(self, other: Any) -> bool:
         return (
@@ -207,6 +259,23 @@ class Function(Program):
                 s += " " + format(arg)
             return s + ")"
 
+    def __pretty_print__(
+        self, defined: Dict["Program", Tuple[int, str, str]], last: int
+    ) -> int:
+        if self in defined:
+            return last
+        out = []
+        for arg in self.arguments:
+            last = arg.__pretty_print__(defined, last)
+            out.append(defined[arg][1])
+        var_name = f"x{last}"
+        defined[self] = (
+            last,
+            var_name,
+            f"{var_name}: {self.type} = {self.function}({', '.join(out)})",
+        )
+        return last + 1
+
     def __eq__(self, other: object) -> bool:
         return (
             isinstance(other, Function)
@@ -219,6 +288,25 @@ class Function(Program):
         return self.function.is_constant() and all(
             arg.is_constant() for arg in self.arguments
         )
+
+    def constants(self) -> Generator[Optional["Constant"], None, None]:
+        g = [self.function.constants()] + [arg.constants() for arg in self.arguments]
+        for gen in g:
+            c = next(gen, None)
+            while c is not None:
+                yield c
+                c = next(gen, None)
+
+    def all_constants_instantiation(
+        self, constants: Dict[Type, TList[Any]]
+    ) -> Generator["Program", None, None]:
+        for f in self.function.all_constants_instantiation(constants):
+            possibles = [
+                list(arg.all_constants_instantiation(constants))
+                for arg in self.arguments
+            ]
+            for args in itertools.product(*possibles):
+                yield Function(f, list(args))
 
     def is_invariant(self, constant_types: Set[PrimitiveType]) -> bool:
         return self.function.is_invariant(constant_types) and all(
@@ -269,6 +357,16 @@ class Lambda(Program):
 
     def __str__(self) -> str:
         return "(lambda " + format(self.body) + ")"
+
+    def constants(self) -> Generator[Optional["Constant"], None, None]:
+        for x in self.body.constants():
+            yield x
+
+    def all_constants_instantiation(
+        self, constants: Dict[Type, TList[Any]]
+    ) -> Generator["Program", None, None]:
+        for val in self.body.all_constants_instantiation(constants):
+            yield Lambda(val)
 
     def __eq__(self, other: Any) -> bool:
         return isinstance(other, Lambda) and self.body == other.body

@@ -1,11 +1,13 @@
 from collections import defaultdict
 from itertools import product
-from heapq import heappush, heappop
+from heapq import heappush, heappop, heapify
 from typing import (
+    Callable,
     Dict,
     Generator,
     Generic,
     List,
+    Optional,
     Set,
     Tuple,
     TypeVar,
@@ -38,27 +40,34 @@ class HeapElement:
         return f"({self.cost}, {self.combination}, {self.P})"
 
 
-class BeepSearch(
+class BeapSearch(
     ProgramEnumerator[None],
     Generic[U, V, W],
 ):
     def __init__(self, G: ProbDetGrammar[U, V, W]) -> None:
         assert isinstance(G.grammar, CFG)
         self.G = G
+        self.cfg: CFG = G.grammar
         self._seen: Set[Program] = set()
         self._deleted: Set[Program] = set()
+        self._filter: Optional[Callable[[Program], bool]] = None
 
         # S -> cost list
-        self._cost_lists: Dict[Tuple[Type, U], List[float]] = defaultdict(list)
+        self._cost_lists: Dict[Tuple[Type, U], List[float]] = {}
         # S -> cost_index -> program list
-        self._bank: Dict[Tuple[Type, U], Dict[int, List[Program]]] = defaultdict(dict)
+        self._bank: Dict[Tuple[Type, U], Dict[int, List[Program]]] = {}
         # S -> heap of HeapElement queued
-        self._queues: Dict[Tuple[Type, U], List[HeapElement]] = defaultdict(list)
+        self._queues: Dict[Tuple[Type, U], List[HeapElement]] = {}
+
+        for S in self.G.grammar.rules:
+            self._cost_lists[S] = []
+            self._bank[S] = {}
+            self._queues[S] = []
 
     def _init_non_terminal_(self, S: Tuple[Type, U]) -> None:
         if len(self._cost_lists[S]) > 0:
             return
-        self._cost_lists[S].append(0)
+        self._cost_lists[S].append(1e99)
         queue = self._queues[S]
         for P in self.G.rules[S]:
             # Init args
@@ -79,8 +88,34 @@ class BeepSearch(
         Sp = self.G.rules[S][P][0][index]  # type: ignore
         return (Sp[0], (Sp[1], None))  # type: ignore
 
+    def _reevaluate_(self) -> None:
+        if not self.cfg.is_recursive():
+            return
+        changed = True
+        while changed:
+            changed = False
+            for S in list(self._queues.keys()):
+                new_queue = [
+                    HeapElement(
+                        self.G.probabilities[S][el.P]
+                        + sum(
+                            self._cost_lists[self._non_terminal_for_(S, el.P, i)][0]
+                            for i in range(len(el.combination))
+                        ),
+                        el.combination,
+                        el.P,
+                    )
+                    for el in self._queues[S]
+                ]
+                if new_queue != self._queues[S]:
+                    changed = True
+                    heapify(new_queue)
+                    self._queues[S] = new_queue
+                    self._cost_lists[S][0] = self._queues[S][0].cost
+
     def generator(self) -> Generator[Program, None, None]:
         self._init_non_terminal_(self.G.start)
+        self._reevaluate_()
         n = 0
         failed = False
         while not failed:
@@ -93,15 +128,16 @@ class BeepSearch(
                 yield prog
             n += 1
 
+    def programs_in_banks(self) -> int:
+        return sum(sum(len(x) for x in val.values()) for val in self._bank.values())
+
+    def programs_in_queues(self) -> int:
+        return sum(len(val) for val in self._queues.values())
+
     def query(
         self, S: Tuple[Type, U], cost_index: int
     ) -> Generator[Program, None, None]:
         bank = self._bank[S]
-        if cost_index in bank:
-            for prog in bank[cost_index]:
-                yield prog
-            return
-
         queue = self._queues[S]
         if cost_index >= len(self._cost_lists[S]):
             return
@@ -110,11 +146,12 @@ class BeepSearch(
             element = heappop(queue)
             nargs = self.G.arguments_length_for(S, element.P)
             Sargs = [self._non_terminal_for_(S, element.P, i) for i in range(nargs)]
+            # necessary for finite grammars
             failed = False
             # Generate programs
             args_possibles = []
             for i in range(nargs):
-                possibles = list(self.query(Sargs[i], element.combination[i]))
+                possibles = self._query_list_(Sargs[i], element.combination[i])
                 if len(possibles) == 0:
                     failed = True
                     break
@@ -139,7 +176,10 @@ class BeepSearch(
             if cost_index not in bank:
                 bank[cost_index] = []
             for new_args in product(*args_possibles):
-                new_program = Function(element.P, list(new_args))
+                if len(args_possibles) > 0:
+                    new_program: Program = Function(element.P, list(new_args))
+                else:
+                    new_program = element.P
                 if new_program in self._deleted:
                     continue
                 bank[cost_index].append(new_program)
@@ -148,6 +188,14 @@ class BeepSearch(
         if queue:
             next_cost = queue[0].cost
             self._cost_lists[S].append(next_cost)
+
+    def _query_list_(self, S: Tuple[Type, U], cost_index: int) -> List[Program]:
+        bank = self._bank[S]
+        if cost_index in bank:
+            return bank[cost_index]
+        for x in self.query(S, cost_index):
+            pass
+        return bank[cost_index]
 
     def merge_program(self, representative: Program, other: Program) -> None:
         self._deleted.add(other)
@@ -164,11 +212,11 @@ class BeepSearch(
 
     @classmethod
     def name(cls) -> str:
-        return "beep-search"
+        return "beap-search"
 
     def clone_with_memory(
         self, G: Union[ProbDetGrammar, ProbUGrammar]
-    ) -> "BeepSearch[U, V, W]":
+    ) -> "BeapSearch[U, V, W]":
         assert isinstance(G, ProbDetGrammar)
         enum = self.__class__(G)
         enum._seen = self._seen.copy()
@@ -176,7 +224,7 @@ class BeepSearch(
         return enum
 
 
-def enumerate_prob_grammar(G: ProbDetGrammar[U, V, W]) -> BeepSearch[U, V, W]:
+def enumerate_prob_grammar(G: ProbDetGrammar[U, V, W]) -> BeapSearch[U, V, W]:
     Gp: ProbDetGrammar = ProbDetGrammar(
         G.grammar,
         {
@@ -184,4 +232,4 @@ def enumerate_prob_grammar(G: ProbDetGrammar[U, V, W]) -> BeepSearch[U, V, W]:
             for S, val in G.probabilities.items()
         },
     )
-    return BeepSearch(Gp)
+    return BeapSearch(Gp)
