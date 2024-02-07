@@ -1,6 +1,9 @@
 from typing import Callable, Dict
 from examples.pbe.universal.dsl_factory import DSLFactory
 
+def _map(f):
+    return lambda l: list(map(f, l))
+
 __syntax = {
     "head": "'a list -> 'a optional",
     "tail": "'a list -> 'a list",
@@ -9,7 +12,8 @@ __syntax = {
     "append": "'a list -> 'a -> 'a list",
     "extend": "'a list -> 'a list -> 'a list",
     "pop": "'a list -> 'a optional",
-    "count": "'a list -> 'a -> int"
+    "count": "'a list -> 'a -> int",
+    "map": "('a -> 'b) -> 'a list -> 'b list",
 }
 
 
@@ -21,7 +25,9 @@ __semantics = {
     "append": lambda l: lambda x: l.append(x),
     "extend": lambda l: lambda l2: l.extend(l2),
     "pop": lambda l: l.pop() if len(l) > 0 else None,
-    "count": lambda l: lambda x: l.count(x)
+    "count": lambda l: lambda x: l.count(x),
+    "map": lambda f: _map(f),
+    "filter": lambda b: _filter(b) # TODO: add filter
 }
 
 class ListDSL(DSLFactory):

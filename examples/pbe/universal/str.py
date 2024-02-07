@@ -31,12 +31,11 @@ __syntax = {
     "*": "RegLan -> RegLan",
     "+": "RegLan -> RegLan",
     "opt": "RegLan -> RegLan",
-    #range": "string -> string -> RegLan",
     "len": "string -> int",
 }
 
 __semantics = {
-    "++": lambda x: lambda y: x + y,
+    "++": lambda x: lambda y: "" + x + y,
     "at": lambda x: lambda pos: x[pos] if pos > 0 and pos < len(x) else "",
     "substr": lambda x: lambda left: lambda right: x[left:right] if left < right and left > 0 and right < len(x) else "",
     "indexof": lambda x: lambda y: lambda pos: _indexof(x, y, pos),
@@ -50,7 +49,6 @@ __semantics = {
     "*": lambda x: x + r'*',
     "+": lambda x: x + r'+',
     "opt": lambda x: r'|'.join([x,r'']),
-    #"range": lambda x: re.,
     "len": lambda x: len(x)
 }
 

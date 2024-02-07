@@ -4,40 +4,40 @@ from synth.syntax import auto_type
 import numpy as np
 
 __syntax = {
-    ".+": "float -> float -> float",
-    ".-": "float optional -> float -> float",
-    ".*": "float -> float -> float",
-    ".div": "float -> float -> float",
-    ".mod": "float -> float -> float",
-    ".abs": "float -> float",
+    "+": "float -> float -> float",
+    "-": "float -> float -> float",
+    "*": "float -> float -> float",
+    "div": "float -> float -> float",
+    "mod": "float -> float -> float",
+    "abs": "float -> float",
 }
 
 __semantics = {
-    ".+": lambda x: lambda y: round(x + y, 1),
-    ".-": lambda x: lambda y: round(x - y, 1) if x is not None else -y,
-    ".*": lambda x: lambda y: round(x * y, 1),
-    ".div": lambda x: lambda y: 0 if y == 0 else x/y,
-    ".mod": lambda x: lambda y: x if y == 0 else x%y,
-    ".abs": lambda x: abs(x),
+    "+": lambda x: lambda y: round(x + y, 1),
+    "-": lambda x: lambda y: round(x - y, 1) if x is not None else -y,
+    "*": lambda x: lambda y: round(x * y, 1),
+    "div": lambda x: lambda y: 0 if y == 0 else x/y,
+    "mod": lambda x: lambda y: x if y == 0 else x%y,
+    "abs": lambda x: abs(x),
 }
 
 class FloatDSL(DSLFactory):
     __ite_syntax = {
-        ".ite": "bool -> float -> float -> float",
-        ".=": "float -> float -> bool",
-        ".<=": "float -> float -> bool",
-        ".>=": "float -> float -> bool",
-        ".<": "float -> float -> bool",
-        ".>": "float -> float -> bool",
+        "ite": "bool -> float -> float -> float",
+        "=": "float -> float -> bool",
+        "<=": "float -> float -> bool",
+        ">=": "float -> float -> bool",
+        "<": "float -> float -> bool",
+        ">": "float -> float -> bool",
     } 
 
     __ite_semantics = {
-        ".ite": lambda b: lambda x: lambda y: x if b else y,
-        ".=": lambda x: lambda y: x==y,
-        ".<=": lambda x: lambda y: x<=y,
-        ".>=": lambda x: lambda y: x>=y,
-        ".<": lambda x: lambda y: x<y,
-        ".>": lambda x: lambda y: x>y
+        "ite": lambda b: lambda x: lambda y: x if b else y,
+        "=": lambda x: lambda y: x==y,
+        "<=": lambda x: lambda y: x<=y,
+        ">=": lambda x: lambda y: x>=y,
+        "<": lambda x: lambda y: x<y,
+        ">": lambda x: lambda y: x>y
     }
 
 
