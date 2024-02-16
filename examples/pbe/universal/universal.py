@@ -38,11 +38,32 @@ SMT_TO_TYPE_CASTING: Dict[str, str] = {
 SMT_TO_DSL: Dict[str, List[str]] = {
     "LIA": ("int", ["ite"]),
 }
-known_logics: List[str] = ['float', 'int', 'list', 'str', 'bitvector']
+known_logics: List[str] = ['float', 'int', 'list', 'str', 'bitvector', 'boolean']
 known_glues: Dict[str, str] = {
     "int": "float",
     "str": "int"
     }
+
+# checks if called logics are known, in which case we directly import, otherwise maybe use dsl_loader methods
+# Just a dummy for a more refined version of a loader
+def load_logics(logics: List[Tuple[str, List[str]]]):
+    known = []
+    known_names = []
+    unknown = []
+    for s, l in logics:
+        if s in known_logics and s not in known:
+            known.append((s, l))
+            known_names.append(s)
+        else:
+            raise ValueError("Unknown logic %s" % s)
+    for s, l in known:
+        if s in known_glues and known_glues[s] in known_names:
+            known.append(('glue' + s + '2' + known_glues[s], []))
+    dsl, evaluator, lexicon, constants = __load_known_logics(known)
+    # we do not manage yet unknown cases
+    return dsl, evaluator, lexicon, constants
+
+
 
 def boolchecker(input: str) -> bool:
     if input == "true":
@@ -82,25 +103,6 @@ def __load_known_logics(logics: List[Tuple[str, List[str]]]):
         if len(f.get_lexicon()) > 0: 
             lexicon.append(f.get_lexicon())
     evaluator = DSLEvaluator(semantics) 
-    return dsl, evaluator, lexicon, constants
-
-# checks if called logics are known, in which case we directly import, otherwise maybe use dsl_loader methods
-# Just a dummy for a more refined version of a loader
-def load_logics(logics: List[Tuple[str, List[str]]]):
-    known = []
-    known_names = []
-    unknown = []
-    for s, l in logics:
-        if s in known_logics and s not in known:
-            known.append((s, l))
-            known_names.append(s)
-        else:
-            raise ValueError("fk")
-    for s, l in known:
-        if s in known_glues and known_glues[s] in known_names:
-            known.append(('glue' + s + '2' + known_glues[s], []))
-    dsl, evaluator, lexicon, constants = __load_known_logics(known)
-    # we do not manage yet unknown cases
     return dsl, evaluator, lexicon, constants
 
 def search_lexicon(lexicon: List[Any]):
@@ -236,7 +238,7 @@ def reproduce_universal_dataset(
 def get_sygus_dataset():
     path = pathlib.Path("dataset/")
     dataset_files = path.rglob("*sl")
-    all_logics = []
+    all_logics = [("boolean", [])]
     tasks = []
     parser = ProgSmtLibParser()
     objects: List[PSLObject] = []
@@ -278,6 +280,7 @@ def get_sygus_dataset():
     lexicon = search_lexicon(lexicon)
     obfuscated = []
     for o in objects:
+        examples = []
         if len(o.pbe) > 0:
             typed_pbe = [specify(o.filename, x, y, o.type) for x, y in o.pbe]
             examples = [Example(input, output) for input, output in typed_pbe]
@@ -292,7 +295,6 @@ def get_sygus_dataset():
                     failure_obf += 1
                 else:
                     maybe_obf += 1
-            continue
         """
         print(o.func_name) 
         print("*"*50)
@@ -311,17 +313,29 @@ def get_sygus_dataset():
                 print("\t-" + str(bidule))
         print("\n\n")
         """
-        task = Task[PBE](auto_type(o.type), PBE(examples), interpret(o.solution, dsl, o), {"name": o.func_name})
-        tasks.append(task)
+        if len(examples) > 0:
+            # TODO?
+            #if len(o.constants.keys()) > 0:
+            #    task = Task[PBEWithConstants]
+
+            for met, type in o.methods:
+                v1, v2 = o.methods[(met, type)]
+                print(v1)
+                print(v2)
+                print(met + " " + type + " " + v1)
+            task = Task[PBE](auto_type(o.type), PBE(examples), interpret(o.solution, dsl, o), {"name": o.func_name, 'cfg': (o.grammar_interpretation, o.func_param), "methods": o.methods, "file": o.filename})
+            tasks.append(task)
 
     for d in obfuscated[55:60]:
         print(f"{d.filename}, {d.func_name}")
-    dataset = Dataset(tasks)
+    print(evaluator)
+    dataset = Dataset(tasks, metadata={"dataset": "sygus", "logics": all_logics})
     print("SUCCESS %d |||| FAILURES %d |||| SYNTAX FAILURES %d |||| OBFUSCATION FAILURES %d |||| SOLVABLE OBFUSCATIONS %d |||| TOTAL %d" % (total-failures-failure_syntax-failure_obf-maybe_obf, failures, failure_syntax, failure_obf, maybe_obf, total))
     return dataset
 
 
 if __name__ == "__main__":
     dataset = get_sygus_dataset()
+    dataset.save("sygus.pickle")
     #for d in dataset[55:60]:
     #    print(d)

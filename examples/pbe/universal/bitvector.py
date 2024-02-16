@@ -66,7 +66,6 @@ class BVChild(DSLFactory):
         new_ite = {}
         for rule in self.__ite_syntax:
             new_ite[rule] = self.__ite_syntax[rule](self._type)
-            #self.__ite_semantics[rule] = self.__ite_semantics[rule](self.__num_bits)
         self._syntax.update(new_ite)
         self._semantics.update(self.__ite_semantics)
 

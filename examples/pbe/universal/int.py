@@ -2,8 +2,6 @@ from typing import Callable, Dict
 from examples.pbe.universal.dsl_factory import DSLFactory
 from synth.syntax import auto_type
 
-## bitvector: faire avec des int infinis pythons
-
 __syntax = {
     "+": "int -> int -> int",
     "-": "int -> int -> int",
