@@ -2,7 +2,6 @@ from collections import defaultdict
 from itertools import product
 from heapq import heappush, heappop
 from typing import (
-    Callable,
     Dict,
     Generator,
     Generic,
@@ -17,6 +16,7 @@ from dataclasses import dataclass, field
 
 import numpy as np
 
+from synth.filter.filter import Filter
 from synth.syntax.grammars.cfg import CFG
 from synth.syntax.grammars.enumeration.program_enumerator import ProgramEnumerator
 from synth.syntax.grammars.grammar import DerivableProgram
@@ -44,12 +44,13 @@ class BeeSearch(
     ProgramEnumerator[None],
     Generic[U, V, W],
 ):
-    def __init__(self, G: ProbDetGrammar[U, V, W]) -> None:
+    def __init__(
+        self, G: ProbDetGrammar[U, V, W], filter: Optional[Filter[Program]] = None
+    ) -> None:
+        super().__init__(filter)
         assert isinstance(G.grammar, CFG)
         self.G = G
-        self._seen: Set[Program] = set()
         self._deleted: Set[Program] = set()
-        self._filter: Optional[Callable[[Program], bool]] = None
 
         self._cost_list: List[float] = []
         # S -> cost_index -> program list
@@ -126,6 +127,9 @@ class BeeSearch(
     ) -> bool:
         if new_program in self._deleted:
             return False
+        if not self._should_keep_subprogram(new_program):
+            self._deleted.add(new_program)
+            return False
         local_bank = self._bank[S]
         if cost_index not in local_bank:
             local_bank[cost_index] = []
@@ -168,9 +172,6 @@ class BeeSearch(
                 if not succ:
                     failed -= 1
                 succ = True
-                if program in self._seen:
-                    continue
-                self._seen.add(program)
                 yield program
 
     def _next_cheapest_(self) -> Tuple[List[Tuple[Type, U]], Optional[float]]:
@@ -264,12 +265,9 @@ class BeeSearch(
     def name(cls) -> str:
         return "bee-search"
 
-    def clone_with_memory(
-        self, G: Union[ProbDetGrammar, ProbUGrammar]
-    ) -> "BeeSearch[U, V, W]":
+    def clone(self, G: Union[ProbDetGrammar, ProbUGrammar]) -> "BeeSearch[U, V, W]":
         assert isinstance(G, ProbDetGrammar)
         enum = self.__class__(G)
-        enum._seen = self._seen.copy()
         return enum
 
 

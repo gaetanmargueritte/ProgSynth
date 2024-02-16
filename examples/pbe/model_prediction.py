@@ -17,7 +17,7 @@ from model_loader import (
 
 
 from synth import Dataset, PBE
-from synth.pruning.constraints.dfta_constraints import add_dfta_constraints
+from synth.filter import add_dfta_constraints
 from synth.syntax import CFG, UCFG, ProbDetGrammar, ProbUGrammar, DSL, Type
 from synth.utils import load_object, save_object
 
@@ -162,7 +162,6 @@ def produce_pcfgs(
             dsl,
             t,
             max_depth,
-            upper_bound_type_size=10,
             constant_types=constant_types,
             min_variable_depth=0,
             n_gram=ngram,

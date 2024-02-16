@@ -1,5 +1,4 @@
 from typing import (
-    Callable,
     Generator,
     Generic,
     Optional,
@@ -7,10 +6,11 @@ from typing import (
     Union,
 )
 from abc import ABC, abstractmethod
+
 from synth.syntax.grammars.tagged_det_grammar import ProbDetGrammar
 from synth.syntax.grammars.tagged_u_grammar import ProbUGrammar
-
 from synth.syntax.program import Program
+from synth.filter import Filter
 
 
 U = TypeVar("U")
@@ -22,6 +22,10 @@ class ProgramEnumerator(ABC, Generic[U]):
     When a program is generated a feedback of type U is expected.
     If U is None then no feedback is expected.
     """
+
+    def __init__(self, filter: Optional[Filter[Program]] = None) -> None:
+        super().__init__()
+        self.filter = filter
 
     @classmethod
     @abstractmethod
@@ -58,18 +62,11 @@ class ProgramEnumerator(ABC, Generic[U]):
         """
         pass
 
-    def set_subprogram_filter(self, filter: Callable[[Program], bool]) -> None:
-        """
-        Function that can be called to filter out subprograms, can be used for observational equivalence and is the most efficient way to do so.
-        When filter returns True the program will be discarded by the enumerator.
-        """
-        self._filter: Optional[Callable[[Program], bool]] = filter
-
     def _should_keep_subprogram(self, program: Program) -> bool:
-        return self._filter is None or not self._filter(program)
+        return self.filter is None or self.filter.accept(program)
 
     @abstractmethod
-    def clone_with_memory(
+    def clone(
         self, grammar: Union[ProbDetGrammar, ProbUGrammar]
     ) -> "ProgramEnumerator[U]":
         """

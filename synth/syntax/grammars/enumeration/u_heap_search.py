@@ -15,6 +15,7 @@ from typing import (
 )
 from abc import ABC, abstractmethod
 
+from synth.filter.filter import Filter
 from synth.syntax.grammars.enumeration.program_enumerator import ProgramEnumerator
 from synth.syntax.grammars.enumeration.heap_search import HeapElement, Bucket
 from synth.syntax.program import Program, Function
@@ -46,14 +47,16 @@ def __wrap__(el: Union[U, List[U]]) -> Union[U, Tuple[U, ...]]:
 
 class UHSEnumerator(ProgramEnumerator[None], ABC, Generic[U, V, W]):
     def __init__(
-        self, G: ProbUGrammar[U, V, W], threshold: Optional[Ordered] = None
+        self,
+        G: ProbUGrammar[U, V, W],
+        threshold: Optional[Ordered] = None,
+        filter: Optional[Filter[Program]] = None,
     ) -> None:
-        self._filter: Optional[Callable[[Program], bool]] = None
+        super().__init__(filter)
         self.G = G
         symbols = [S for S in self.G.rules]
         self.threshold = threshold
         self.deleted: Set[Program] = set()
-        self.seen: Set[Program] = set()
 
         # self.heaps[S] is a heap containing programs generated from the non-terminal S
         self.heaps: Dict[Tuple[Type, U], List[HeapElement]] = {S: [] for S in symbols}
@@ -100,14 +103,9 @@ class UHSEnumerator(ProgramEnumerator[None], ABC, Generic[U, V, W]):
             program = self.start_query()
             if program is None:
                 break
-            while program in self.seen:
-                program = self.start_query()
-                if program is None:
-                    return
             if not self._should_keep_subprogram(program):
                 self.deleted.add(program)
                 continue
-            self.seen.add(program)
             yield program
 
     def probability(self, program: Program) -> float:
@@ -321,13 +319,10 @@ class UHSEnumerator(ProgramEnumerator[None], ABC, Generic[U, V, W]):
     ) -> Ordered:
         pass
 
-    def clone_with_memory(
-        self, G: Union[ProbDetGrammar, ProbUGrammar]
-    ) -> "UHSEnumerator[U, V, W]":
+    def clone(self, G: Union[ProbDetGrammar, ProbUGrammar]) -> "UHSEnumerator[U, V, W]":
         assert isinstance(G, ProbUGrammar)
         enum = self.__class__(G, self.threshold)
         enum.deleted = self.deleted.copy()
-        enum.seen = self.seen.copy()
         return enum
 
 

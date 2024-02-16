@@ -1,6 +1,6 @@
 import os
 import sys
-from typing import Any, Callable, Iterable, List, Optional, Tuple, Union
+from typing import Any, Callable, Iterable, List, Optional, Set, Tuple, Union
 import csv
 
 import tqdm
@@ -10,6 +10,7 @@ from dsl_loader import add_dsl_choice_arg, load_DSL
 
 
 from synth import Dataset, PBE
+from synth.filter.filter import Filter
 from synth.semantic.evaluator import DSLEvaluator
 from synth.specification import PBEWithConstants
 from synth.syntax import (
@@ -23,13 +24,19 @@ from synth.syntax import (
     hs_enumerate_bucket_prob_grammar,
     hs_enumerate_bucket_prob_u_grammar,
     ProgramEnumerator,
+    Type,
+    CFG,
 )
+from synth.filter import DFTAFilter, ObsEqFilter
+from synth.filter.constraints import add_dfta_constraints
+from synth.syntax.program import Program
+from synth.task import Task
 from synth.utils import load_object
+from synth.utils.import_utils import import_file_function
 from synth.pbe.solvers import (
     NaivePBESolver,
     PBESolver,
     CutoffPBESolver,
-    ObsEqPBESolver,
     RestartPBESolver,
 )
 
@@ -37,10 +44,7 @@ from synth.pbe.solvers import (
 import argparse
 
 
-SOLVERS = {
-    solver.name(): solver
-    for solver in [NaivePBESolver, CutoffPBESolver, ObsEqPBESolver]
-}
+SOLVERS = {solver.name(): solver for solver in [NaivePBESolver, CutoffPBESolver]}
 base_solvers = {x: y for x, y in SOLVERS.items()}
 for meta_solver in [RestartPBESolver]:
     for name, solver in base_solvers.items():
@@ -57,6 +61,8 @@ SEARCH_ALGOS = {
     ),
     "bee_search": (bs_enumerate_prob_grammar, None),
 }
+
+PRUNING = {"dfta", "obs-eq"}
 
 parser = argparse.ArgumentParser(
     description="Solve program synthesis tasks", fromfile_prefix_chars="@"
@@ -96,6 +102,19 @@ parser.add_argument(
     "-t", "--timeout", type=float, default=300, help="task timeout in s (default: 300)"
 )
 
+parser.add_argument(
+    "-p",
+    "--pruning",
+    nargs="*",
+    choices=list(x for x in PRUNING),
+    help="runtime pruning",
+)
+parser.add_argument(
+    "--filter",
+    nargs="*",
+    type=str,
+    help="load the given files and call their get_filter functions to get a Filter[Program]",
+)
 
 parameters = parser.parse_args()
 dsl_name: str = parameters.dsl
@@ -109,6 +128,8 @@ constrained: bool = parameters.constrained
 support: Optional[str] = (
     None if not parameters.support else parameters.support.format(dsl_name=dsl_name)
 )
+pruning: List[str] = parameters.pruning or []
+filter_files: List[str] = parameters.filter or []
 
 if not os.path.exists(dataset_file) or not os.path.isfile(dataset_file):
     print("Dataset must be a valid dataset file!", file=sys.stderr)
@@ -139,11 +160,22 @@ dataset_name = dataset_file[start_index : dataset_file.index(".", start_index)]
 supported_type_requests = Dataset.load(support).type_requests() if support else None
 
 # ================================
+# Load dftas files
+# ================================
+filter_pot_funs = [
+    import_file_function(file[:-3].replace("/", "."), ["get_filter"])()
+    for file in filter_files
+]
+filter_funs = [x.get_filter for x in filter_pot_funs if x is not None]
+
+# ================================
 # Load constants specific to dataset
 # ================================
 
 
-def load_dsl_and_dataset() -> Tuple[Dataset[PBE], DSL, DSLEvaluator]:
+def load_dsl_and_dataset() -> Tuple[
+    Dataset[PBE], DSL, DSLEvaluator, List[str], Set[Type]
+]:
     dsl_module = load_DSL(dsl_name)
     dsl, evaluator = dsl_module.dsl, dsl_module.evaluator
     # ================================
@@ -151,19 +183,49 @@ def load_dsl_and_dataset() -> Tuple[Dataset[PBE], DSL, DSLEvaluator]:
     # ================================
     full_dataset = load_dataset(dsl_name, dataset_file)
 
-    return full_dataset, dsl, evaluator
+    return (
+        full_dataset,
+        dsl,
+        evaluator,
+        getattr(dsl_module, "constraints", []),
+        getattr(dsl_module, "constant_types", set()),
+    )
 
 
 # Produce PCFGS ==========================================================
 
 
-def save(trace: Iterable) -> None:
+def save(trace: Iterable, file: str) -> None:
     with open(file, "w") as fd:
         writer = csv.writer(fd)
         writer.writerows(trace)
 
 
 # Enumeration methods =====================================================
+def setup_filters(
+    task: Task[PBE], constant_types: Set[Type]
+) -> Optional[Filter[Program]]:
+    out = None
+    # Dynamic DFTA filters
+    filters = [f(task.type_request, constant_types) for f in filter_funs]
+    for filter in filters:
+        out = filter if out is None else out.intersection(filter)
+    if "dfta" in pruning:
+        base_grammar = CFG.infinite(
+            dsl, task.type_request, constant_types=constant_types
+        )
+        filter = DFTAFilter(
+            add_dfta_constraints(base_grammar, constraints, progress=False)
+        )
+        out = filter if out is None else out.intersection(filter)
+    if "obs-eq" in pruning:
+        filter = ObsEqFilter(
+            solver.evaluator, [ex.inputs for ex in task.specification.examples]
+        )
+        out = filter if out is None else out.intersection(filter)
+    return out
+
+
 def enumerative_search(
     dataset: Dataset[PBE],
     evaluator: DSLEvaluator,
@@ -173,6 +235,8 @@ def enumerative_search(
     custom_enumerate: Callable[
         [Union[ProbDetGrammar, ProbUGrammar]], ProgramEnumerator
     ],
+    save_file: str,
+    constant_types: Set[Type],
 ) -> None:
 
     start = max(0, len(trace) - 1)
@@ -197,9 +261,9 @@ def enumerative_search(
         if isinstance(task.specification, PBEWithConstants):
             pcfg = pcfg.instantiate_constants(task.specification.constants)
         try:
-            sol_generator = solver.solve(
-                task, custom_enumerate(pcfg), timeout=task_timeout
-            )
+            enumerator = custom_enumerate(pcfg)
+            enumerator.filter = setup_filters(task, constant_types)
+            sol_generator = solver.solve(task, enumerator, timeout=task_timeout)
             solution = next(sol_generator)
             task_solved = True
             solved += 1
@@ -216,7 +280,7 @@ def enumerative_search(
         # print("Programs tried:", trace[len(trace) - 1][2])
         if i % 10 == 0:
             pbar.set_postfix_str("Saving...")
-            save(trace)
+            save(trace, save_file)
         pbar.set_postfix_str(f"Solved {solved}/{total}")
 
     pbar.close()
@@ -225,11 +289,7 @@ def enumerative_search(
 # Main ====================================================================
 
 if __name__ == "__main__":
-    (
-        full_dataset,
-        dsl,
-        evaluator,
-    ) = load_dsl_and_dataset()
+    (full_dataset, dsl, evaluator, constraints, constant_types) = load_dsl_and_dataset()
 
     solver: PBESolver = method(evaluator=evaluator)
 
@@ -237,9 +297,10 @@ if __name__ == "__main__":
     model_name = os.path.split(pcfg_file)[1][
         len(f"pcfgs_{dataset_name}_") : -len(".pickle")
     ]
+    pruning_suffix = "_".join(pruning)
     file = os.path.join(
         output_folder,
-        f"{dataset_name}_{search_algo}_{model_name}_{solver.full_name()}.csv",
+        f"{dataset_name}_{search_algo}_{model_name}_{solver.full_name()}{pruning_suffix}.csv",
     )
     trace = []
     if os.path.exists(file):
@@ -255,6 +316,15 @@ if __name__ == "__main__":
                 int((len(trace) - 1) * 100 / len(full_dataset)),
                 "%)",
             )
-    enumerative_search(full_dataset, evaluator, pcfgs, trace, solver, custom_enumerate)
-    save(trace)
+    enumerative_search(
+        full_dataset,
+        evaluator,
+        pcfgs,
+        trace,
+        solver,
+        custom_enumerate,
+        file,
+        constant_types,
+    )
+    save(trace, file)
     print("csv file was saved as:", file)
