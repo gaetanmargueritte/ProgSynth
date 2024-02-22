@@ -1,0 +1,15 @@
+(set-logic int)
+
+;; name and signature
+(synth-fun addints ((x int) (y int)) int)
+
+;; for progsynth only
+(constraint-pbe (addints -4 -2) -6)
+(constraint-pbe (addints 4 5) 9)
+(constraint-pbe (addints 17 1) 18)
+(constraint-pbe (addints 444 444) 888)
+
+
+(constraint-syntax (+ _ ^+))
+
+(check-progsynth)

@@ -63,7 +63,18 @@ def load_logics(logics: List[Tuple[str, List[str]]]):
     # we do not manage yet unknown cases
     return dsl, evaluator, lexicon, constants
 
-
+def get_types_from_sygus(typestr: str) -> List[str]:
+    # converts Sygus types str to progsynth compatible str 
+    mtype_split = typestr.split(" -> ")
+    types_list = []
+    for t in mtype_split:
+        bv_split = t.split('_BitVec')
+        if len(bv_split) > 1:
+            x = bv_split[1]
+            types_list.append("bv"+x)
+        else:
+            types_list.append(t.lower())
+    return types_list
 
 def boolchecker(input: str) -> bool:
     if input == "true":
@@ -247,6 +258,7 @@ def get_sygus_dataset():
     failure_obf = 0
     maybe_obf = 0
     total = 0
+    bvi = -1
     for f in dataset_files:
         total += 1
         file = open(f, 'r')
@@ -266,9 +278,16 @@ def get_sygus_dataset():
                     bv_split = t.split('_BitVec')
                     if len(bv_split) > 1:
                         x = bv_split[1]
-                        new_logic = ('bitvector' , [x, "ite"])
-                        if new_logic not in all_logics:
+                        if bvi == -1:
+                            new_logic = ('bitvector' , [x, "ite"])
+                            bvi = len(all_logics)
                             all_logics.append(new_logic)
+                        else:
+                            name, options = all_logics.pop(bvi)
+                            bvi = len(all_logics)
+                            if x not in options:
+                                options.append(x)
+                            all_logics.append((name, options))
             elif logic not in all_logics:
                 all_logics.append(logic)
         if pslobject.smtlogic != '' and pslobject.smtlogic not in all_logics:
@@ -320,15 +339,15 @@ def get_sygus_dataset():
 
             for met, type in o.methods:
                 v1, v2 = o.methods[(met, type)]
-                print(v1)
-                print(v2)
-                print(met + " " + type + " " + v1)
-            task = Task[PBE](auto_type(o.type), PBE(examples), interpret(o.solution, dsl, o), {"name": o.func_name, 'cfg': (o.grammar_interpretation, o.func_param), "methods": o.methods, "file": o.filename})
+                #print(v1)
+                #print(v2)
+                #print(met + " " + type + " " + v1)
+            type_list = get_types_from_sygus(o.type)
+            task = Task[PBE](auto_type(' -> '.join(type_list)), PBE(examples), interpret(o.solution, dsl, o), {"name": o.func_name, 'cfg': (o.grammar_interpretation, o.func_param), "methods": o.methods, "file": o.filename})
             tasks.append(task)
 
     for d in obfuscated[55:60]:
         print(f"{d.filename}, {d.func_name}")
-    print(evaluator)
     dataset = Dataset(tasks, metadata={"dataset": "sygus", "logics": all_logics})
     print("SUCCESS %d |||| FAILURES %d |||| SYNTAX FAILURES %d |||| OBFUSCATION FAILURES %d |||| SOLVABLE OBFUSCATIONS %d |||| TOTAL %d" % (total-failures-failure_syntax-failure_obf-maybe_obf, failures, failure_syntax, failure_obf, maybe_obf, total))
     return dataset

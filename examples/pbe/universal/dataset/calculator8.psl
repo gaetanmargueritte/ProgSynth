@@ -1,0 +1,21 @@
+(set-logic (float ite))
+
+;; name and signature
+(synth-fun maxfloats ((x float) (y float)) float
+    ((a float) (b bool))
+    ((a float (x y 0 1 
+                (+ a a) (- a a)
+                (ite b a a)))
+    (b bool ((and b b) (or b b) (not b)
+             (= a a) (<= a a) (>= a a)))))
+
+;; for progsynth only
+(constraint-pbe (maxfloats 2.0 88.1) 88.1)
+(constraint-pbe (maxfloats 4.0 5.9) 5.9)
+(constraint-pbe (maxfloats -2.4 2.6) 2.6)
+(constraint-pbe (maxfloats 0.0 -3.0) 0.0)
+
+
+(constraint-syntax (+ _ ^+))
+
+(check-progsynth)

@@ -1,0 +1,15 @@
+(set-logic float int)
+
+;; name and signature
+(synth-fun transform2float ((x int)) float)
+
+
+;; for progsynth only
+(constraint-pbe (transform2float 72) 72.0)
+(constraint-pbe (transform2float -1) -1.0)
+(constraint-pbe (transform2float 4) 4.0)
+
+
+(constraint-syntax (+ _ ^+))
+
+(check-progsynth)

@@ -1,0 +1,28 @@
+(set-logic (int ite) float)
+
+
+;; name and signature
+(synth-fun addfloatint ((x float) (y int)) float)
+
+;; unsure whether this method should be used
+;; (declare-var x float)
+;; (declare-var y int)
+
+;; constraints for SMT
+(assert (= (+ x y) (addfloatint x y)))
+;; ensures both args are glued to float
+(assert (= (+ x y) (addfloatint y x)))
+
+;; for progsynth only
+(constraint-pbe (addfloatint 2.0 88) 90.0)
+(constraint-pbe (addfloatint 4.0 5) 9.0)
+(constraint-pbe (addfloatint -2.4 2) -0.4)
+(constraint-pbe (addfloatint 0.0 -3) -3.0)
+
+(define-const (int 4 44 20 -18))
+
+(constraint-syntax (+ _ ^+))
+
+(solution-pbe (+ var0 (int2float var1)))
+
+(check-progsynth)

@@ -6,7 +6,7 @@ from typing import Any, Callable, Iterable, List, Optional, Tuple, Union, Set, D
 import tqdm
 
 from progpysmt.pslobject import Method
-from examples.pbe.universal.universal import load_logics
+from examples.pbe.universal.universal import load_logics, get_types_from_sygus
 from synth import Dataset, PBE
 from synth.semantic.evaluator import DSLEvaluator
 from examples.pbe.dataset_loader import DatasetUnpickler
@@ -17,7 +17,6 @@ from synth.pbe.solvers import (
     NaivePBESolver,
     PBESolver,
     CutoffPBESolver,
-    ObsEqPBESolver,
     RestartPBESolver,
 )
 from synth.syntax import (
@@ -65,7 +64,7 @@ SMT_TO_TYPE_CASTING: Dict[str, str] = {
 }
 SOLVERS = {
     solver.name(): solver
-    for solver in [NaivePBESolver, CutoffPBESolver, ObsEqPBESolver]
+    for solver in [NaivePBESolver, CutoffPBESolver]
 }
 base_solvers = {x: y for x, y in SOLVERS.items()}
 
@@ -119,7 +118,7 @@ parser.add_argument(
     type=int,
     default=2,
     choices=[1, 2],
-    help="ngram used by grammars (default: 2)",
+    help="ngram used by grammars (default: 1)",
 )
 parameters = parser.parse_args()
 dataset_file: str = parameters.dataset
@@ -152,18 +151,27 @@ def load_dsl_and_dataset() -> Tuple[Dataset[PBE], DSL, DSLEvaluator]:
     dsl, evaluator, lexicon, constants = load_logics(logics)
     return dataset, dsl, evaluator
 
-#def save(trace: Iterable) -> None:
-#    with open(file, "w") as fd:
-#        writer = csv.writer(fd)
-#        writer.writerows(trace)
+def save(trace: Iterable) -> None:
+    with open(file, "w") as fd:
+        writer = csv.writer(fd)
+        writer.writerows(trace)
+
+def get_primitive_with_type(name: str, dsl: DSL, type: List[Type]):
+    for P in dsl.list_primitives:
+        type_set, type_set_polymorphic = P.type.decompose_type()
+        if P.primitive == name and (all([m in type_set or m in type_set_polymorphic for m in type])):
+            return P
+    return None
 
 def produce_cfg_from_task(
     task: Task[PBE],
     original_dsl: DSL,
     evaluator: DSLEvaluator,
-) -> CFG:
+) -> Tuple[CFG, DSLEvaluator]:
     def __to_semantic(method_body: str, method_param: Dict[str, str], method_signature: str):
         met_spl = method_body.split(' ')
+        types_list = get_types_from_sygus(method_signature)
+        types_list = [auto_type(t) for t in types_list]
         cons_dict = {}
         res = ""
         prim_stack = []
@@ -176,78 +184,82 @@ def produce_cfg_from_task(
                 continue
             elif tok == ')':
                 res = res[:-1] + ')' + ' '
+                args_stack.pop()
                 continue
-            prim = dsl.get_primitive(tok)
+            prim = get_primitive_with_type(tok, dsl, types_list)
             if prim is not None:
+                # primitive exists, check for duplicate names 
                 prim_stack.append(prim)
                 args_stack.append(prim.type.arguments())
                 res += tok + " "
             elif tok in method_param:
                 # tok is a var
+                current_prim_type = args_stack.pop()
+                argtype = current_prim_type.pop(0)
                 if tok not in vars2ptr:
                     varptr += 1
                     vars2ptr[tok] = "var" + str(varptr-1)
                 res += vars2ptr[tok] + " "
+                args_stack.append(current_prim_type)
             else:
                 # tok is a constant
                 current_prim_type = args_stack.pop()
                 argtype = current_prim_type.pop(0)
                 cast = SMT_TO_TYPE_CASTING[str.lower(argtype.type_name)](tok)
-                cons_dict[str(cast)] = (cast, argtype.type_name)
-                res += cast + " "
+                cons_dict[str(cast)] = (auto_type(argtype.type_name), cast)
+                res += str(cast) + " "
+                args_stack.append(current_prim_type)
         return res[:-1], cons_dict
     def __lambdify(program: Program, vars: List[int]):
-        def __lambda(met: Callable):
-            return lambda x: x
-        if len(vars) == 0:
-            return program
-        varnum = vars.pop()
-        varname = "var" + str(varnum)
-        print(program.pretty_print())
-        evaluation = evaluator.eval()
-        for subprog in program.depth_first_iter():
-            
-            print(subprog, type(subprog))
-        # if arity > len(accu)
-            # lambda x: accu.append(x)
-        # if arity <= len(accu)
-            # return evaluator.eval(program, *accu)
-        assert 0
-
-
+        def f(x: Any, n, acc):
+            acc.append(x)
+            if n == 1:
+                return evaluator.eval(program, acc)
+            return lambda x: f(x, n - 1, acc)
+        return lambda x: f(x, len(vars), [])
     dsl = original_dsl
     cfg, func_param = task.metadata["cfg"]
     methods = task.metadata["methods"]
     metnames = [metname for metname, _ in task.metadata["methods"].keys()]
+    constant_types = []
     print(task.metadata["file"])
     if len(cfg) > 0:
         new_dsl_syntax = {}
         new_dsl_semantic = {}
         for c in cfg:
             varname, vartype = c
-            print(varname, " ", vartype)
+            vartype = get_types_from_sygus(vartype)[0]
             for rule in cfg[c]:
-                print(rule)
                 if type(rule) == str:
                     if rule in func_param:
                         continue
                     else:
-                        new_dsl_syntax[rule] = vartype
-                        new_dsl_semantic[rule] = SMT_TO_TYPE_CASTING[str.lower(vartype)](rule) 
+                        cast = SMT_TO_TYPE_CASTING[vartype](rule)
+                        new_dsl_syntax[str(cast)] = vartype
+                        new_dsl_semantic[str(cast)] = cast 
+                        constant_types.append(auto_type(vartype))
                 elif type(rule) == Method:
-                    if dsl.get_primitive(rule.name):
-                        continue
+                    str_types_list = get_types_from_sygus(rule.signature)
+                    types_list = [auto_type(t) for t in str_types_list]
+                    prim = get_primitive_with_type(rule.name, dsl, types_list)
+                    if prim:
+                        new_dsl_syntax[prim.primitive] = ' -> '.join(str_types_list)
+                        new_dsl_semantic[prim.primitive] = evaluator.semantics[prim]
                     elif rule.name in metnames:
                         met_body, met_param = methods[(rule.name, rule.signature)]
                         tokens, constants = __to_semantic(met_body, met_param, rule.signature)
                         program = dsl.parse_program(tokens, auto_type(rule.signature), constants)
                         vars = sorted(list(program.used_variables()))
                         program = __lambdify(program, vars)
-                        #print(program.used_variables())
-                        assert 0
-                    
-                    print("\t" + rule.name + "\t" + rule.signature)
-        return
+                        new_dsl_syntax[rule.name] = ' -> '.join(str_types_list)
+                        new_dsl_semantic[rule.name] = program
+                    #print("\t" + rule.name + "\t" + rule.signature)
+    else:
+        return (CFG.infinite(original_dsl, task.type_request, 2), evaluator)
+    new_dsl = DSL(auto_type(new_dsl_syntax))
+    new_dsl.instantiate_polymorphic_types(1)
+    new_dsl_semantic = new_dsl.instantiate_semantics(new_dsl_semantic)
+    return (CFG.infinite(new_dsl, task.type_request, 2), DSLEvaluator(new_dsl_semantic))
 
     
 
@@ -256,23 +268,20 @@ def produce_pcfgs(
         dsl: DSL,
         evaluator: DSLEvaluator,
 ) -> Union[List[ProbDetGrammar], List[ProbUGrammar]]:
-    all_type_requests = (
-        full_dataset.type_requests()
-    )
-
+    cfgs = []
+    evaluators = []
     for t in full_dataset.tasks:
-        produce_cfg_from_task(t, dsl, evaluator)
-    cfgs = [
-        produce_cfg_from_task(t, dsl)
-        for t in full_dataset.tasks
-    ]
+        cfg, e = produce_cfg_from_task(t, dsl, evaluator)
+        cfgs.append(cfg)
+        evaluators.append(e)
+    pcfgs = [ProbDetGrammar.uniform(c) for c in cfgs]
+    return pcfgs, evaluators
 
 def enumerative_search(
         dataset: Dataset[PBE],
-        evaluator: DSLEvaluator,
+        evaluators: List[DSLEvaluator],
         pcfgs: Union[List[ProbDetGrammar], List[ProbUGrammar]],
         trace: List[Tuple[bool, float]],
-        solver: PBESolver,
         custom_enumerate: Callable[
             [Union[ProbDetGrammar, ProbUGrammar]], ProgramEnumerator
         ]
@@ -283,12 +292,16 @@ def enumerative_search(
     solved = 0
     total = 0
     tasks = dataset.tasks
-    stats_name = solver.available_stats()
+    init_solver = method(evaluators[0])
     if start == 0:
-        trace.append(["solved", "solution"] + stats_name)
-    for task, pcfg in zip(tasks[start:], pcfgs[start:]):
-        if task.metadata.get("name", None) is not None:
-            pbar.set_description(task.metadata["name"])
+        trace.append(["filename", "solved", "solution"] + init_solver.available_stats())
+    for task, pcfg, evaluator in zip(tasks[start:], pcfgs[start:], evaluators[start:]):
+        #print("Solving %s"%task.metadata.get("file"))
+        task_filename = task.metadata.get("file", None)
+        solver: PBESolver = method(evaluator=evaluator)
+        stats_name = solver.available_stats()
+        if task_filename:
+            pbar.set_description(str(task_filename))
         total += 1
         task_solved = False
         solution = None
@@ -297,23 +310,41 @@ def enumerative_search(
                 task, custom_enumerate(pcfg), timeout=task_timeout
             )
             solution = next(sol_generator)
+            #print(solution)
             task_solved = True
             solved += 1
         except KeyboardInterrupt:
             break
         except StopIteration:
             pass
-        out = [task_solved, solution] + [solver.get_stats(name) for name in stats_name]
+        out = [str(task_filename), task_solved, solution] + [solver.get_stats(name) for name in stats_name]
         solver.reset_stats()
         trace.append(out)
         pbar.update(1)
         evaluator.clear_cache()
         if i%10 == 0:
             pbar.set_postfix_str("Saving...")
-            #save(trace)
+            save(trace)
         pbar.set_postfix_str(f"Solver {solved}/{total}")
     pbar.close()
 
 if __name__ == "__main__":
     dataset, dsl, evaluator = load_dsl_and_dataset()
-    produce_pcfgs(dataset, dsl, evaluator)
+    pcfgs, evaluators = produce_pcfgs(dataset, dsl, evaluator)
+    done = 0
+    tasks = dataset.tasks
+    file = os.path.join(
+        output_folder,
+        f"{dataset_name}_{search_algo}_uniform.csv",
+    )
+    trace = []
+    enumerative_search(dataset, evaluators, pcfgs, trace, custom_enumerate)
+    save(trace)
+    print("csv file was saved as:", file)
+
+## TODO: Améliorer la trace
+    # assurer les sémantiques de bv
+    # lancer plafrim (30mn timeout)
+    # faire la doc du parser avec des examples des dicos
+    # ajouter le sampling
+    # relancer plafrim ad vitam nauseam

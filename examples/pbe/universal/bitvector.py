@@ -15,7 +15,7 @@ __syntax = {
     "bvand": lambda x: f"{x} -> {x} -> {x}",
     #"xor": lambda x: f"{x} -> {x} -> {x}",
     "bvshl": lambda x: f"{x} -> {x} -> {x}",
-    "bvshr": lambda x: f"{x} -> {x} -> {x}"
+    "bvlshr": lambda x: f"{x} -> {x} -> {x}"
 }
 
 # strong bit detection required with mbv
@@ -27,19 +27,20 @@ __semantics = {
     "bvudiv": lambda mbv: lambda x: lambda y: 1 if y == 0 else x//y if x//y < mbv and x//y > -mbv else -mbv+(((x//y)+1)%mbv) if x*y >= mbv else (((x//y)-2)%mbv),
     "bvurem": lambda mbv: lambda x: lambda y: x if y == 0 else x%y,
     #"-": lambda mbv: lambda x: lambda y: x-y if x-y < mbv and x-y > -mbv else -mbv+((x-y+1)%mbv) if x-y >= mbv else ((x-y-2)%mbv),
-    "bvneg": lambda mbv: lambda x: 2**mbv - x,
+    "bvneg": lambda mbv: lambda x: mbv - x,
     "bvnot": lambda mbv: lambda x: -x if x < mbv and x > -mbv else -(x%mbv),
     "bvor": lambda mbv: lambda x: lambda y: x|y,
     "bvand": lambda mbv: lambda x: lambda y: x&y, 
     #"xor": lambda mbv: lambda x: lambda y: x^y,
-    "bvshl": lambda mbv: lambda x: lambda n: x*(2**n) if x*(2**n) < mbv else mbv-((x*(2**n))%mbv), 
-    "bvshr": lambda mbv: lambda x: lambda n: x/(2**n) if x/(2**n) > -mbv else 0,
+    "bvshl": lambda mbv: lambda x: lambda n: x<<n if x << n < mbv else mbv-((x<<n)%mbv), 
+    "bvlshr": lambda mbv: lambda x: lambda n: x >> n if x >> n> -mbv else 0,
 }
 
 class BVChild(DSLFactory):
     __ite_syntax = {
         "ite": lambda x: f"bool -> {x} -> {x} -> {x}",
         "bvult": lambda x: f"{x} -> {x} -> bool",
+        "=": lambda x: f"{x} -> {x} -> bool"
         #">": lambda x: f"{x} -> {x} -> bool",
         #"<=": lambda x: f"{x} -> {x} -> bool",
         #">=": lambda x: f"{x} -> {x} -> bool",
@@ -48,6 +49,7 @@ class BVChild(DSLFactory):
     __ite_semantics = {
         "ite": lambda b: lambda x: lambda y: x if b else y,
         "bvult": lambda x: lambda y: x < y,
+        "=": lambda x: lambda y: x == y,
         #">": lambda x: lambda y: x > y,
         #"<=": lambda x: lambda y: x <= y,
         #">=": lambda x: lambda y: x >= y,
@@ -57,7 +59,7 @@ class BVChild(DSLFactory):
     def __init__(self, syntax: Dict[str, Any], semantics: Dict[str, Any], lexicon: List[Any], x: int, forbidden_pattern: Dict[str, str] = None, needs_init: bool = False) -> None:
         super().__init__(syntax, semantics, lexicon, forbidden_pattern)
         self._type = "bv" + str(x)
-        self._num_bits = 2**x
+        self._num_bits = 1 << x - 1
         for rule in self._syntax:
             self._syntax[rule] = self._syntax[rule](self._type)
             self._semantics[rule] = self._semantics[rule](self._num_bits)
@@ -91,6 +93,7 @@ class BVFactory(DSLFactory):
         self._blank_syntax = syntax.copy()
         self._blank_semantics = semantics.copy()
         self._dsl = None
+        self.__instances = []
 
     def get_dsl(self) -> DSL:
         return self._dsl
@@ -151,22 +154,22 @@ class BVFactory(DSLFactory):
         first = self.__instances[0]
         first._finalize()
         self._dsl = first.get_dsl()
-        self._dsl.instantiate_polymorphic_types(1)
-        instantiated_semantics.update(self._dsl.instantiate_semantics(first._semantics))
+        instantiated_semantics.update(first._semantics)
         for i in self.__instances[1:]:
             i._finalize()
             idsl = i.get_dsl()
-            idsl.instantiate_polymorphic_types()
-            instantiated_semantics.update(idsl.instantiate_semantics(i._semantics))
+            instantiated_semantics.update(i._semantics)
             self._dsl = self._dsl | idsl
         if len(self.__instances) > 1:
             self._semantics.clear()
             self._syntax.clear()
             self.__glue_all()
+            glue_dsl = DSL(auto_type(self._syntax), self._forbidden_pattern)
+            glue_sem = glue_dsl.instantiate_semantics(self._semantics)
             self._dsl = self._dsl | DSL(auto_type(self._syntax), self._forbidden_pattern)
             self._dsl.instantiate_polymorphic_types(2)
-            instantiated_semantics.update(self._dsl.instantiate_semantics(self._semantics))
+            instantiated_semantics.update(glue_sem)
         self._semantics = instantiated_semantics
-
+        
 __lexicon = [x for x in range(-255,256)]
 factory = BVFactory(__syntax, __semantics, __lexicon)

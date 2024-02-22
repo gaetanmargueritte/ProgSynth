@@ -1,0 +1,16 @@
+(set-logic float)
+
+
+;; name and signature
+(synth-fun addfloats ((x float) (y float)) float)
+
+;; for progsynth only
+(constraint-pbe (addfloats 2.0 88.1) 90.1)
+(constraint-pbe (addfloats 4.0 5.9) 9.9)
+(constraint-pbe (addfloats -2.4 2.6) 0.2)
+(constraint-pbe (addfloats 0.0 -3.0) -3.0)
+
+
+(constraint-syntax (+ _ ^+))
+
+(check-progsynth)
