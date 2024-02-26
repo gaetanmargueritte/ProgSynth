@@ -12,18 +12,22 @@ class ObsEqFilter(Filter):
         self._cache: Dict[Tuple[Any, ...], Program] = {}
 
     def _eval(self, prog: Program) -> bool:
+        """
+        Returns True iff the prog is unique wrt to outputs
+        """
         outputs = None
         for inputs in self.inputs_list:
             out = self.evaluator.eval(prog, inputs)
             if out is None:
-                return True
+                return False
             outputs = (outputs, out)
         original = self._cache.get(outputs)  # type: ignore
-        if original is not None:
-            return True
+        if original is not None and original.type == prog.type:
+            #print("\t\trejected:", prog, "is a copy of", original)
+            return False
         else:
             self._cache[outputs] = prog  # type: ignore
-            return False
+            return True
 
     def accept(self, obj: Program) -> bool:
         return self._eval(obj)

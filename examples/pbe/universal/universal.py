@@ -46,6 +46,15 @@ known_glues: Dict[str, str] = {
 
 # checks if called logics are known, in which case we directly import, otherwise maybe use dsl_loader methods
 # Just a dummy for a more refined version of a loader
+
+def boolchecker(input: str) -> bool:
+    if input == "true":
+        return True
+    elif input == "false":
+        return False
+    raise ValueError("Bool object is neither True or False: %s"%input)
+
+
 def load_logics(logics: List[Tuple[str, List[str]]]):
     known = []
     known_names = []
@@ -75,13 +84,6 @@ def get_types_from_sygus(typestr: str) -> List[str]:
         else:
             types_list.append(t.lower())
     return types_list
-
-def boolchecker(input: str) -> bool:
-    if input == "true":
-        return True
-    elif input == "false":
-        return False
-    raise ValueError("Bool object is neither True or False: %s"%input)
 
 def __load_known_logics(logics: List[Tuple[str, List[str]]]):
     cste_flag = False
@@ -260,6 +262,8 @@ def get_sygus_dataset():
     total = 0
     bvi = -1
     for f in dataset_files:
+        #if "calculator" not in str(f):
+        #    continue
         total += 1
         file = open(f, 'r')
         print(f)
@@ -301,7 +305,10 @@ def get_sygus_dataset():
     for o in objects:
         examples = []
         if len(o.pbe) > 0:
-            typed_pbe = [specify(o.filename, x, y, o.type) for x, y in o.pbe]
+            if len(o.pbe) > 15:
+                typed_pbe = [specify(o.filename, x, y, o.type) for x, y in o.pbe[:15]]
+            else:
+                typed_pbe = [specify(o.filename, x, y, o.type) for x, y in o.pbe]
             examples = [Example(input, output) for input, output in typed_pbe]
         else:
             if any([1 if len(c.pbe) <= 0 else 0 for c in o.constraints]):
